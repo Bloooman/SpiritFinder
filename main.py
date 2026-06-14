@@ -83,8 +83,11 @@ class ResultItem(BaseModel):
 
 
 def _query_tokens(query: str) -> list[str]:
-    """Meaningful words from the query (skip 1-2 char tokens like 'El', 'XO')."""
-    return [w for w in query.lower().split() if len(w) > 2]
+    """Meaningful words from the query.
+    Short tokens are kept when purely numeric (age statements: '10', '12', '21').
+    Single/double-letter abbreviations like 'El', 'XO' are still skipped."""
+    age_statement = {"vs", "vsop", "xo"}
+    return [w for w in query.lower().split() if len(w) > 2 or w.isdigit() or w in age_statement]
 
 
 def _relevant(name: str, tokens: list[str]) -> bool:
@@ -93,6 +96,15 @@ def _relevant(name: str, tokens: list[str]) -> bool:
         return True  # query has no long tokens — don't filter
     low = name.lower()
     return any(t in low for t in tokens)
+
+
+def _relevance_score(name: str, tokens: list[str]) -> float:
+    """Fraction of query tokens present in the bottle name (0.0 – 1.0).
+    Used as the primary sort key so closer matches rank above cheap-but-wrong results."""
+    if not tokens:
+        return 1.0
+    low = name.lower()
+    return sum(1 for t in tokens if t in low) / len(tokens)
 
 
 async def _run_scraper(scraper, query: str) -> list[ResultItem]:
@@ -168,7 +180,8 @@ async def search(req: SearchRequest) -> list[ResultItem]:
     priced = [r for r in all_results if not r.error and r.price is not None]
     errors = [r for r in all_results if r.error]
 
-    priced.sort(key=lambda r: r.price or 0.0)
+    tokens = _query_tokens(req.query)
+    priced.sort(key=lambda r: (-_relevance_score(r.bottle_name, tokens), r.price or 0.0))
     return priced + errors
 
 
