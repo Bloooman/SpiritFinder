@@ -1,0 +1,278 @@
+import asyncio
+import logging
+import time
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+from fastapi import FastAPI
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from playwright.async_api import BrowserContext, async_playwright
+from playwright_stealth import Stealth
+from pydantic import BaseModel
+
+from scrapers import scrapers
+from scrapers.base import BottleResult
+from store_generator import GeneratorError, add_store
+
+log = logging.getLogger("spiritfinder")
+
+_context: BrowserContext | None = None
+
+_BROWSER_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/131.0.0.0 Safari/537.36"
+)
+
+_CACHE_TTL = 1800  # 30 minutes
+
+# (store_name, normalized_query) -> (monotonic_timestamp, results)
+_cache: dict[tuple[str, str], tuple[float, list]] = {}
+
+# Bottle names accumulated from all past searches for autocomplete
+_name_index: set[str] = set()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global _context
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(name)s  %(message)s")
+    pw = await async_playwright().start()
+    browser = await pw.chromium.launch(
+        headless=True,
+        args=["--disable-blink-features=AutomationControlled"],
+    )
+    _context = await browser.new_context(
+        user_agent=_BROWSER_UA,
+        viewport={"width": 1280, "height": 800},
+        extra_http_headers={
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+        },
+    )
+    await Stealth().apply_stealth_async(_context)
+    yield
+    await _context.close()
+    await browser.close()
+    await pw.stop()
+
+
+app = FastAPI(lifespan=lifespan)
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
+@app.get("/")
+async def index():
+    return FileResponse("static/index.html")
+
+
+class SearchRequest(BaseModel):
+    query: str
+
+
+class ResultItem(BaseModel):
+    store_name: str
+    bottle_name: str
+    price: float | None
+    url: str
+    in_stock: bool
+    size: str | None
+    error: bool = False
+    error_message: str | None = None
+
+
+def _query_tokens(query: str) -> list[str]:
+    """Meaningful words from the query (skip 1-2 char tokens like 'El', 'XO')."""
+    return [w for w in query.lower().split() if len(w) > 2]
+
+
+def _relevant(name: str, tokens: list[str]) -> bool:
+    """True if the bottle name contains at least one query token."""
+    if not tokens:
+        return True  # query has no long tokens — don't filter
+    low = name.lower()
+    return any(t in low for t in tokens)
+
+
+async def _run_scraper(scraper, query: str) -> list[ResultItem]:
+    cache_key = (scraper.name, query.lower().strip())
+    entry = _cache.get(cache_key)
+    if entry:
+        ts, cached_items = entry
+        if time.monotonic() - ts < _CACHE_TTL:
+            return cached_items
+
+    assert _context is not None
+    page = await _context.new_page()
+    tokens = _query_tokens(query)
+    try:
+        raw: list[BottleResult] = await scraper.search(page, query)
+        items = [
+            ResultItem(
+                store_name=r.store_name,
+                bottle_name=r.bottle_name,
+                price=r.price,
+                url=r.url,
+                in_stock=r.in_stock,
+                size=r.size,
+            )
+            for r in raw
+            if _relevant(r.bottle_name, tokens)
+        ]
+        dropped = len(raw) - len(items)
+        log.info(
+            "[%s] query=%r  raw=%d  kept=%d  dropped=%d",
+            scraper.name, query, len(raw), len(items), dropped,
+        )
+        if dropped and not items:
+            # All results were filtered — log a sample so we can see why
+            log.info("[%s] filtered-out names: %s", scraper.name,
+                     [r.bottle_name for r in raw[:5]])
+
+        # Don't cache empty results — let the next search retry the live site
+        if items:
+            _cache[cache_key] = (time.monotonic(), items)
+            for item in items:
+                if item.bottle_name:
+                    _name_index.add(item.bottle_name)
+        return items
+    except Exception as e:
+        log.warning("[%s] scrape error: %s", scraper.name, e)
+        # Don't cache errors — transient failures shouldn't persist
+        return [
+            ResultItem(
+                store_name=scraper.name,
+                bottle_name="",
+                price=None,
+                url="",
+                in_stock=False,
+                size=None,
+                error=True,
+                error_message=str(e),
+            )
+        ]
+    finally:
+        await page.close()
+
+
+@app.post("/search")
+async def search(req: SearchRequest) -> list[ResultItem]:
+    if not scrapers:
+        return []
+
+    per_store = await asyncio.gather(*[_run_scraper(s, req.query) for s in scrapers])
+
+    all_results: list[ResultItem] = [item for store in per_store for item in store]
+
+    priced = [r for r in all_results if not r.error and r.price is not None]
+    errors = [r for r in all_results if r.error]
+
+    priced.sort(key=lambda r: r.price or 0.0)
+    return priced + errors
+
+
+@app.get("/suggest")
+async def suggest(q: str = "") -> list[str]:
+    q_low = q.strip().lower()
+    if len(q_low) < 2:
+        return []
+    matches = [n for n in _name_index if q_low in n.lower()]
+    # Prioritise names that start with the query, then sort alphabetically
+    matches.sort(key=lambda n: (not n.lower().startswith(q_low), n.lower()))
+    return matches[:12]
+
+
+@app.get("/debug/scrape")
+async def debug_scrape(store: str, q: str):
+    """
+    Bypass the cache and run one scraper directly.
+    Visit: /debug/scrape?store=Burlington+Wine+%26+Spirits&q=el+dorado+12
+    """
+    target = next((s for s in scrapers if s.name == store), None)
+    if not target:
+        return JSONResponse(status_code=404, content={
+            "error": "store not found",
+            "available": [s.name for s in scrapers],
+        })
+    assert _context is not None
+    page = await _context.new_page()
+    try:
+        raw: list[BottleResult] = await target.search(page, q)
+        tokens = _query_tokens(q)
+        kept = [r for r in raw if _relevant(r.bottle_name, tokens)]
+        dropped = [r for r in raw if not _relevant(r.bottle_name, tokens)]
+        # Capture page state so we can see block/CAPTCHA pages when raw=0
+        page_title = await page.title()
+        page_url = page.url
+        page_text = (await page.inner_text("body"))[:400] if raw == [] else ""
+        return {
+            "store": store,
+            "query": q,
+            "tokens": tokens,
+            "raw_count": len(raw),
+            "kept_count": len(kept),
+            "dropped_count": len(dropped),
+            "kept": [{"name": r.bottle_name, "price": r.price} for r in kept],
+            "dropped_names": [r.bottle_name for r in dropped[:20]],
+            "page_title": page_title,
+            "page_url": page_url,
+            "page_text_snippet": page_text,
+        }
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+    finally:
+        await page.close()
+
+
+@app.get("/scrapers")
+async def list_scrapers():
+    return [{"name": s.name} for s in scrapers]
+
+
+class RenameRequest(BaseModel):
+    old_name: str
+    new_name: str
+
+
+@app.post("/rename-store")
+async def rename_store(req: RenameRequest):
+    for scraper in scrapers:
+        if scraper.name == req.old_name:
+            # Patch live instance
+            scraper.name = req.new_name
+            # Patch the file so the name survives a restart
+            try:
+                for p in Path("scrapers").glob("*.py"):
+                    text = p.read_text()
+                    needle = f"name = {req.old_name!r}"
+                    if needle in text:
+                        p.write_text(text.replace(needle, f"name = {req.new_name!r}", 1))
+                        break
+            except Exception:
+                pass
+            return {"ok": True}
+    return JSONResponse(status_code=404, content={"ok": False, "error": "Store not found"})
+
+
+class AddStoreRequest(BaseModel):
+    url: str
+    name: str = ""
+
+
+@app.post("/add-store")
+async def add_store_endpoint(req: AddStoreRequest):
+    assert _context is not None
+    try:
+        result = await add_store(req.url, _context, custom_name=req.name)
+        return {"ok": True, **result}
+    except GeneratorError as e:
+        return JSONResponse(
+            status_code=422,
+            content={"ok": False, "error": str(e), "stage": e.stage},
+        )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"ok": False, "error": str(e), "stage": "unknown"},
+        )

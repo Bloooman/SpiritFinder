@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SpiritFinder</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f5f3ef;
+      color: #1a1a1a;
+      min-height: 100vh;
+      padding: 2rem 1rem 4rem;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+    header h1 { font-size: 2rem; letter-spacing: -0.5px; }
+    header p  { color: #666; margin-top: 0.25rem; }
+
+    /* ── search bar ── */
+    .search-bar {
+      display: flex;
+      gap: 0.5rem;
+      max-width: 600px;
+      margin: 0 auto 2rem;
+    }
+    .search-input-wrap {
+      position: relative;
+      flex: 1;
+    }
+    .search-bar input {
+      width: 100%;
+      padding: 0.65rem 1rem;
+      border: 1.5px solid #ccc;
+      border-radius: 8px;
+      font-size: 1rem;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .search-bar input:focus { border-color: #5a3e28; }
+    .search-bar button {
+      padding: 0.65rem 1.4rem;
+      background: #5a3e28;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 1rem;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .search-bar button:hover  { background: #3e2a18; }
+    .search-bar button:disabled { background: #aaa; cursor: not-allowed; }
+
+    /* ── autocomplete dropdown ── */
+    #ac-dropdown {
+      display: none;
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0;
+      right: 0;
+      background: #fff;
+      border: 1.5px solid #ccc;
+      border-radius: 8px;
+      box-shadow: 0 4px 14px rgba(0,0,0,.12);
+      z-index: 200;
+      overflow: hidden;
+    }
+    #ac-dropdown.visible { display: block; }
+    .ac-item {
+      padding: 0.55rem 1rem;
+      cursor: pointer;
+      font-size: 0.93rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      color: #1a1a1a;
+    }
+    .ac-item:hover, .ac-item.focused { background: #f5f3ef; }
+    .ac-icon { font-size: 0.72rem; color: #aaa; flex-shrink: 0; }
+
+    /* ── spinner / status ── */
+    .spinner { display: none; text-align: center; padding: 2rem; color: #666; }
+    .spinner.active { display: block; }
+    #status { text-align: center; color: #666; margin-bottom: 1rem; min-height: 1.4em; }
+
+    /* ── results table ── */
+    .table-wrap { overflow-x: auto; max-width: 960px; margin: 0 auto; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #fff;
+      border-radius: 10px;
+      overflow: hidden;
+      box-shadow: 0 1px 4px rgba(0,0,0,.08);
+    }
+    thead th {
+      background: #5a3e28;
+      color: #fff;
+      text-align: left;
+      padding: 0.75rem 1rem;
+      font-weight: 600;
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    tbody tr { border-bottom: 1px solid #f0ece6; }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: #faf8f5; }
+    tbody tr.best-price { background: #edf7ed; }
+    tbody tr.best-price:hover { background: #e2f2e2; }
+    tbody tr.error-row { background: #fff5f5; color: #c0392b; }
+    td { padding: 0.7rem 1rem; font-size: 0.95rem; vertical-align: middle; }
+
+    .price-cell { font-weight: 700; font-size: 1.05rem; }
+    .best-badge {
+      display: inline-block;
+      background: #27ae60;
+      color: #fff;
+      font-size: 0.65rem;
+      font-weight: 700;
+      padding: 0.15rem 0.4rem;
+      border-radius: 4px;
+      margin-left: 0.4rem;
+      vertical-align: middle;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .stock-yes { color: #27ae60; font-weight: 600; }
+    .stock-no  { color: #c0392b; font-weight: 600; }
+    a.product-link { color: #5a3e28; text-decoration: none; font-weight: 600; }
+    a.product-link:hover { text-decoration: underline; }
+
+    .empty { text-align: center; padding: 3rem; color: #999; display: none; }
+    .empty.active { display: block; }
+
+    /* ── add-store panel ── */
+    .add-store-wrap {
+      max-width: 600px;
+      margin: 3rem auto 0;
+    }
+    .add-store-toggle {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: none;
+      border: none;
+      border-top: 1px solid #ddd;
+      padding: 0.9rem 0;
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: #555;
+      cursor: pointer;
+      letter-spacing: 0.02em;
+    }
+    .add-store-toggle:hover { color: #222; }
+    .add-store-toggle .arrow { transition: transform 0.2s; }
+    .add-store-toggle.open .arrow { transform: rotate(180deg); }
+
+    .add-store-panel {
+      display: none;
+      padding: 1rem 0 0.5rem;
+    }
+    .add-store-panel.open { display: block; }
+
+    .store-url-row {
+      display: flex;
+      gap: 0.5rem;
+    }
+    .store-url-row input {
+      flex: 1;
+      padding: 0.6rem 0.9rem;
+      border: 1.5px solid #ccc;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .store-url-row input:focus { border-color: #5a3e28; }
+    .store-url-row button {
+      padding: 0.6rem 1.2rem;
+      background: #5a3e28;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.15s;
+    }
+    .store-url-row button:hover { background: #3e2a18; }
+    .store-url-row button:disabled { background: #aaa; cursor: not-allowed; }
+
+    #add-progress {
+      margin-top: 0.75rem;
+      font-size: 0.88rem;
+      color: #555;
+      min-height: 1.3em;
+    }
+    #add-progress.error { color: #c0392b; }
+    #add-progress.success { color: #27ae60; }
+
+    .store-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      margin-top: 1rem;
+    }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      background: #e8e0d6;
+      color: #3e2a18;
+      padding: 0.25rem 0.55rem 0.25rem 0.7rem;
+      border-radius: 20px;
+      font-size: 0.82rem;
+      font-weight: 600;
+    }
+    .chip.new { background: #d4edda; color: #155724; }
+    .chip-rename {
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: 0.75rem;
+      color: inherit;
+      opacity: 0.55;
+      padding: 0;
+      line-height: 1;
+    }
+    .chip-rename:hover { opacity: 1; }
+    .chip-edit-input {
+      border: none;
+      outline: none;
+      background: transparent;
+      font: inherit;
+      font-weight: 600;
+      color: inherit;
+      width: 12ch;
+      border-bottom: 1.5px solid currentColor;
+      padding: 0;
+    }
+    #stores-label {
+      font-size: 0.78rem;
+      color: #999;
+      margin-top: 1rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      display: none;
+    }
+    #stores-label.visible { display: block; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🥃 SpiritFinder</h1>
+    <p>Search across multiple stores and find the best price.</p>
+  </header>
+
+  <form class="search-bar" id="search-form">
+    <div class="search-input-wrap">
+      <input type="text" id="query" placeholder="e.g. Lagavulin 16 or Ardbeg" autocomplete="off" required />
+      <div id="ac-dropdown"></div>
+    </div>
+    <button type="submit" id="search-btn">Search</button>
+  </form>
+
+  <div id="status"></div>
+  <div class="spinner" id="spinner">Searching all stores&hellip;</div>
+
+  <div class="table-wrap" id="table-wrap" style="display:none">
+    <table>
+      <thead>
+        <tr>
+          <th>Store</th><th>Bottle</th><th>Price</th>
+          <th>Size</th><th>In Stock</th><th>Link</th>
+        </tr>
+      </thead>
+      <tbody id="results-body"></tbody>
+    </table>
+  </div>
+  <div class="empty" id="empty-msg">No results found. Try a different search term.</div>
+
+  <!-- ── Add Store panel ── -->
+  <div class="add-store-wrap">
+    <button class="add-store-toggle" id="toggle-btn" type="button">
+      <span>Manage Stores</span>
+      <span class="arrow">▾</span>
+    </button>
+    <div class="add-store-panel" id="add-panel">
+      <div class="store-url-row">
+        <input type="url" id="store-url" placeholder="https://www.example-liquor-store.com/" />
+        <button type="button" id="add-btn">Add Store</button>
+      </div>
+      <div style="margin-top:0.5rem">
+        <input type="text" id="store-name" placeholder="Store name (optional — auto-detected if blank)"
+          style="width:100%;padding:0.45rem 0.8rem;border:1.5px solid #ddd;border-radius:6px;font-size:0.88rem;outline:none;color:#333" />
+      </div>
+      <div id="add-progress"></div>
+      <div id="stores-label">Active stores</div>
+      <div class="store-chips" id="store-chips"></div>
+    </div>
+  </div>
+
+  <script>
+    // ── helpers ──────────────────────────────────────────────────────────────
+    function esc(str) {
+      const d = document.createElement('div');
+      d.textContent = str ?? '';
+      return d.innerHTML;
+    }
+    function fmt(price) {
+      return price == null ? '—' : '$' + price.toFixed(2);
+    }
+
+    // ── store chips ──────────────────────────────────────────────────────────
+    const chipsEl   = document.getElementById('store-chips');
+    const labelEl   = document.getElementById('stores-label');
+
+    async function refreshChips(newName) {
+      try {
+        const res = await fetch('/scrapers');
+        const list = await res.json();
+        chipsEl.innerHTML = '';
+        list.forEach(s => {
+          const chip = document.createElement('span');
+          chip.className = 'chip' + (s.name === newName ? ' new' : '');
+
+          const label = document.createElement('span');
+          label.textContent = s.name;
+          chip.appendChild(label);
+
+          const btn = document.createElement('button');
+          btn.className = 'chip-rename';
+          btn.title = 'Rename';
+          btn.textContent = '✎';
+          btn.addEventListener('click', () => {
+            // Swap label for an inline input
+            const input = document.createElement('input');
+            input.className = 'chip-edit-input';
+            input.value = s.name;
+            input.size = Math.max(s.name.length, 8);
+            chip.replaceChild(input, label);
+            btn.textContent = '✓';
+            btn.title = 'Save';
+            input.focus();
+            input.select();
+
+            const commit = async () => {
+              const fresh = input.value.trim();
+              if (fresh && fresh !== s.name) {
+                const res = await fetch('/rename-store', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ old_name: s.name, new_name: fresh }),
+                });
+                const d = await res.json();
+                if (!d.ok) { chip.replaceChild(label, input); btn.textContent = '✎'; btn.title = 'Rename'; return; }
+              }
+              refreshChips(fresh || s.name);
+            };
+
+            const cancel = () => {
+              chip.replaceChild(label, input);
+              btn.textContent = '✎';
+              btn.title = 'Rename';
+            };
+
+            input.addEventListener('keydown', e => {
+              if (e.key === 'Enter') { e.preventDefault(); commit(); }
+              if (e.key === 'Escape') cancel();
+            });
+            input.addEventListener('blur', () => setTimeout(cancel, 150));
+
+            // Second click on ✓ commits
+            btn.onclick = (e) => { e.stopPropagation(); commit(); };
+          });
+          chip.appendChild(btn);
+          chipsEl.appendChild(chip);
+        });
+        labelEl.className = list.length > 0 ? 'visible' : '';
+      } catch {}
+    }
+    refreshChips();
+
+    // ── toggle panel ─────────────────────────────────────────────────────────
+    const toggleBtn = document.getElementById('toggle-btn');
+    const addPanel  = document.getElementById('add-panel');
+    toggleBtn.addEventListener('click', () => {
+      const open = addPanel.classList.toggle('open');
+      toggleBtn.classList.toggle('open', open);
+    });
+
+    // ── add store ────────────────────────────────────────────────────────────
+    const addBtn      = document.getElementById('add-btn');
+    const storeUrlEl  = document.getElementById('store-url');
+    const progressEl  = document.getElementById('add-progress');
+
+    const STAGES = [
+      'Finding search form…',
+      'Testing search…',
+      'Detecting product cards…',
+      'Generating scraper…',
+    ];
+    let stageTimer = null;
+
+    function startProgress() {
+      let i = 0;
+      progressEl.className = '';
+      progressEl.textContent = STAGES[0];
+      stageTimer = setInterval(() => {
+        i = (i + 1) % STAGES.length;
+        progressEl.textContent = STAGES[i];
+      }, 5000);
+    }
+    function stopProgress() {
+      if (stageTimer) { clearInterval(stageTimer); stageTimer = null; }
+    }
+
+    addBtn.addEventListener('click', async () => {
+      const url = storeUrlEl.value.trim();
+      if (!url) return;
+
+      addBtn.disabled = true;
+      startProgress();
+
+      try {
+        const customName = document.getElementById('store-name').value.trim();
+        const res = await fetch('/add-store', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url, name: customName }),
+        });
+        const data = await res.json();
+        stopProgress();
+
+        if (data.ok) {
+          progressEl.className = 'success';
+          const found = data.results_found ?? 0;
+          progressEl.textContent =
+            `✓ Added "${esc(data.store_name)}" — ${found} result${found !== 1 ? 's' : ''} found during test.`;
+          storeUrlEl.value = '';
+          document.getElementById('store-name').value = '';
+          await refreshChips(data.store_name);
+        } else {
+          progressEl.className = 'error';
+          progressEl.textContent = `✗ ${data.error || 'Failed to add store.'} (stage: ${data.stage})`;
+        }
+      } catch (err) {
+        stopProgress();
+        progressEl.className = 'error';
+        progressEl.textContent = '✗ Request failed: ' + err.message;
+      } finally {
+        addBtn.disabled = false;
+      }
+    });
+
+    // ── autocomplete ─────────────────────────────────────────────────────────
+    const queryEl    = document.getElementById('query');
+    const acDropdown = document.getElementById('ac-dropdown');
+
+    const HISTORY_KEY = 'sf_history';
+    function getHistory() {
+      try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]'); } catch { return []; }
+    }
+    function addHistory(q) {
+      const h = [q, ...getHistory().filter(x => x !== q)].slice(0, 20);
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(h));
+    }
+
+    let _acItems = [];
+    let _focusIdx = -1;
+    let _acTimer  = null;
+
+    function hideAc() {
+      acDropdown.classList.remove('visible');
+      _focusIdx = -1;
+    }
+
+    function renderAc(items) {
+      _acItems = items;
+      _focusIdx = -1;
+      acDropdown.innerHTML = '';
+      if (!items.length) { hideAc(); return; }
+      items.forEach((item, i) => {
+        const div = document.createElement('div');
+        div.className = 'ac-item';
+        const icon = document.createElement('span');
+        icon.className = 'ac-icon';
+        icon.textContent = item.type === 'history' ? '⏱' : '⌕';
+        div.appendChild(icon);
+        const txt = document.createElement('span');
+        txt.textContent = item.text;
+        div.appendChild(txt);
+        div.addEventListener('mousedown', e => { e.preventDefault(); pickAc(i); });
+        acDropdown.appendChild(div);
+      });
+      acDropdown.classList.add('visible');
+    }
+
+    function moveFocus(delta) {
+      _focusIdx = Math.max(-1, Math.min(_acItems.length - 1, _focusIdx + delta));
+      Array.from(acDropdown.children).forEach((el, i) =>
+        el.classList.toggle('focused', i === _focusIdx));
+    }
+
+    function pickAc(idx) {
+      const item = _acItems[idx];
+      if (!item) return;
+      queryEl.value = item.text;
+      hideAc();
+      document.getElementById('search-form').dispatchEvent(new Event('submit'));
+    }
+
+    async function refreshAc() {
+      const q = queryEl.value.trim();
+      if (q.length < 2) {
+        const hist = getHistory().slice(0, 6).map(t => ({ text: t, type: 'history' }));
+        renderAc(hist);
+        return;
+      }
+      const [suggests] = await Promise.all([
+        fetch(`/suggest?q=${encodeURIComponent(q)}`).then(r => r.json()).catch(() => []),
+      ]);
+      const histMatches = getHistory()
+        .filter(h => h.toLowerCase().includes(q.toLowerCase()))
+        .slice(0, 3)
+        .map(t => ({ text: t, type: 'history' }));
+      const suggestItems = suggests
+        .filter(t => !histMatches.some(h => h.text === t))
+        .map(t => ({ text: t, type: 'suggest' }));
+      renderAc([...histMatches, ...suggestItems].slice(0, 10));
+    }
+
+    queryEl.addEventListener('input', () => {
+      clearTimeout(_acTimer);
+      _acTimer = setTimeout(refreshAc, 200);
+    });
+
+    queryEl.addEventListener('focus', () => {
+      if (queryEl.value.trim().length < 2) {
+        const hist = getHistory().slice(0, 6).map(t => ({ text: t, type: 'history' }));
+        if (hist.length) renderAc(hist);
+      }
+    });
+
+    queryEl.addEventListener('keydown', e => {
+      if (!acDropdown.classList.contains('visible')) return;
+      if (e.key === 'ArrowDown') { e.preventDefault(); moveFocus(1); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); moveFocus(-1); }
+      else if (e.key === 'Enter' && _focusIdx >= 0) { e.preventDefault(); pickAc(_focusIdx); }
+      else if (e.key === 'Escape') hideAc();
+    });
+
+    queryEl.addEventListener('blur', () => setTimeout(hideAc, 150));
+
+    // ── search ───────────────────────────────────────────────────────────────
+    const form     = document.getElementById('search-form');
+    const searchBtn = document.getElementById('search-btn');
+    const spinner  = document.getElementById('spinner');
+    const tbody    = document.getElementById('results-body');
+    const tableWrap = document.getElementById('table-wrap');
+    const emptyMsg  = document.getElementById('empty-msg');
+    const statusEl  = document.getElementById('status');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      hideAc();
+      const query = queryEl.value.trim();
+      if (!query) return;
+      addHistory(query);
+
+      searchBtn.disabled = true;
+      spinner.classList.add('active');
+      tableWrap.style.display = 'none';
+      emptyMsg.classList.remove('active');
+      statusEl.textContent = '';
+      tbody.innerHTML = '';
+
+      try {
+        const res = await fetch('/search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query }),
+        });
+        const results = await res.json();
+
+        const priced = results.filter(r => !r.error && r.price != null);
+        const errors = results.filter(r => r.error);
+        const lowestPrice = priced.length > 0 ? priced[0].price : null;
+
+        if (results.length === 0) {
+          emptyMsg.classList.add('active');
+        } else {
+          tableWrap.style.display = '';
+          priced.forEach((r, i) => {
+            const isBest = r.price === lowestPrice && i === 0;
+            const tr = document.createElement('tr');
+            if (isBest) tr.classList.add('best-price');
+            tr.innerHTML = `
+              <td>${esc(r.store_name)}</td>
+              <td>${esc(r.bottle_name)}</td>
+              <td class="price-cell">${fmt(r.price)}${isBest ? '<span class="best-badge">Best</span>' : ''}</td>
+              <td>${r.size ? esc(r.size) : '—'}</td>
+              <td class="${r.in_stock ? 'stock-yes' : 'stock-no'}">${r.in_stock ? 'Yes' : 'No'}</td>
+              <td>${r.url ? `<a class="product-link" href="${esc(r.url)}" target="_blank" rel="noreferrer">View →</a>` : '—'}</td>
+            `;
+            tbody.appendChild(tr);
+          });
+
+          errors.forEach(r => {
+            const tr = document.createElement('tr');
+            tr.classList.add('error-row');
+            tr.innerHTML = `
+              <td>${esc(r.store_name)}</td>
+              <td colspan="5">Error: ${esc(r.error_message || 'scrape failed')}</td>
+            `;
+            tbody.appendChild(tr);
+          });
+
+          const found = priced.length;
+          const errCount = errors.length;
+          statusEl.textContent =
+            `${found} result${found !== 1 ? 's' : ''} across ${found + errCount} store${found + errCount !== 1 ? 's' : ''}` +
+            (errCount ? ` (${errCount} store${errCount !== 1 ? 's' : ''} failed)` : '');
+        }
+      } catch (err) {
+        statusEl.textContent = 'Search failed: ' + err.message;
+      } finally {
+        searchBtn.disabled = false;
+        spinner.classList.remove('active');
+      }
+    });
+  </script>
+</body>
+</html>
