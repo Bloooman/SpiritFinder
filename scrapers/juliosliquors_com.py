@@ -7,7 +7,7 @@ from .base import BottleResult, StoreScraper
 
 
 class JuliosliquorsComScraper(StoreScraper):
-    name = "Julio's Liquors"
+    name = "Julio's Liquors, MA"
     _base = 'https://juliosliquors.com'
     _search_url = 'https://juliosliquors.com/shop?ch-query={query}'
 

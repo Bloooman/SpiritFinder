@@ -6,35 +6,30 @@ from playwright.async_api import Page
 from .base import BottleResult, StoreScraper
 
 
-class NorfolkwineandspiritsComScraper(StoreScraper):
-    name = 'Norfolk Wine & Spirits, MA'
-    _base = 'https://norfolkwineandspirits.com'
-    _search_url = 'https://norfolkwineandspirits.com/?s={query}&post_type=product'
+class TheliquorbarnComScraper(StoreScraper):
+    name = 'The Liquor Barn, IL'
+    _base = 'http://www.theliquorbarn.com'
+    _search_url = 'https://theliquorbarn.com/search?options%5Bprefix%5D=last&q={query}&filter.p.product_type='
 
     async def search(self, page: Page, query: str) -> list[BottleResult]:
         await page.goto(self._search_url.format(query=query.replace(" ", "+")))
         await page.wait_for_load_state("networkidle")
-        try:
-            await page.wait_for_selector('li.product', timeout=5000)
-        except Exception:
-            pass
         soup = BeautifulSoup(await page.content(), "html.parser")
         return self._parse(soup)
 
     def _parse(self, soup: BeautifulSoup) -> list[BottleResult]:
         results = []
-        for card in soup.select('li.product'):
-            name_el = card.select_one('h2.woocommerce-loop-product__title')
+        for card in soup.select('div.card__info-inner'):
+            name_el = card.select_one('a.card-link')
             if not name_el:
                 continue
             name = name_el.get_text(strip=True)
             if not name:
                 continue
-            link = card.select_one('a.woocommerce-LoopProduct-link')
-            url = link.get("href", "") if link else ""
+            url = name_el.get("href", "") if name_el.name == "a" else ""
             if url and not url.startswith("http"):
                 url = self._base + url
-            price_el = card.select_one('span.screen-reader-text')
+            price_el = card.select_one('strong.price__current')
             if not price_el:
                 continue
             m = re.search(r"[\d,]+\.?\d*", price_el.get_text())

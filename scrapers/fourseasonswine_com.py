@@ -7,7 +7,7 @@ from .base import BottleResult, StoreScraper
 
 
 class FourseasonswineComScraper(StoreScraper):
-    name = 'Four Seasons Wines & Liquors'
+    name = 'Four Seasons Wines & Liquors, MA'
     _base = 'https://fourseasonswine.com'
     _search_url = _base + '/shop?ch-query={query}'
 
