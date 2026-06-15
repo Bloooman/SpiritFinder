@@ -24,7 +24,7 @@ PRICE_RE = re.compile(r"\$[\d,]+\.\d{2}")
 SIZE_RE = re.compile(r"\d+(?:\.\d+)?\s*(?:ml|mL|ML|[lL](?:\b|itre|iter))")
 SKIP_ATTRS = frozenset(["class", "id", "href", "name", "type", "action", "placeholder"])
 # Link text that indicates a navigation/label link rather than a product name
-PRICE_LABEL_WORDS = {"price", "case", "cart", "wish", "list", "compare", "add", "buy", "shop"}
+PRICE_LABEL_WORDS = {"price", "case", "cart", "wish", "list", "compare", "add", "buy", "shop", "rebate", "review", "rating", "gift"}
 GET_FALLBACKS = [
     ("kw",       "/websearch_results.html?kw={query}"),
     ("ch-query", "/shop?ch-query={query}"),
@@ -75,6 +75,31 @@ KNOWN_TEMPLATES: list[dict] = [
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
+# Known WAF / bot-protection signals and the human-readable name to surface.
+_WAF_SIGNALS: list[tuple[str, str]] = [
+    ("datadome",              "DataDome"),
+    ("captcha-delivery.com",  "DataDome"),
+    ("__cf_chl",              "Cloudflare"),
+    ("cf-challenge",          "Cloudflare"),
+    ("px-captcha",            "PerimeterX"),
+    ("px.js",                 "PerimeterX"),
+    ("incapsula",             "Imperva/Incapsula"),
+    ("akamai-bot-manager",    "Akamai Bot Manager"),
+]
+
+
+def _check_blocked(html: str, url: str) -> None:
+    """Raise GeneratorError with a specific message if a WAF/CAPTCHA is detected."""
+    html_low = html.lower()
+    for signal, name in _WAF_SIGNALS:
+        if signal in html_low:
+            raise GeneratorError(
+                f"This site is protected by {name} bot-detection and blocks automated "
+                "browsers. It cannot be added automatically.",
+                "blocked",
+            )
+
+
 def _strip_html(soup: BeautifulSoup) -> BeautifulSoup:
     for tag in soup.find_all(["script", "style", "svg", "noscript", "iframe"]):
         tag.decompose()
@@ -88,9 +113,16 @@ def _strip_html(soup: BeautifulSoup) -> BeautifulSoup:
 def _css_selector(el: Tag) -> str | None:
     if not isinstance(el, Tag):
         return None
-    classes = el.get("class") or []
-    cls = classes[0] if classes else None
-    return f"{el.name}.{cls}" if cls else el.name
+    # Exclude Tailwind responsive/variant/important prefixes — not valid CSS class names
+    classes = [c for c in (el.get("class") or []) if ":" not in c and "/" not in c and not c.startswith("!")]
+    if not classes:
+        return el.name
+    # Prefer the first class that looks semantic (not a layout utility)
+    for cls in classes:
+        if _is_semantic_cls(cls):
+            return f"{el.name}.{cls}"
+    # All utility classes: use the longest one as a proxy for most specific
+    return f"{el.name}.{max(classes, key=len)}"
 
 
 def _price_nodes(soup: BeautifulSoup) -> list[Tag]:
@@ -115,6 +147,17 @@ def _is_product_link(link: Tag, base_domain: str) -> bool:
     href = link.get("href", "")
     if not (href.startswith("/") or base_domain in href):
         return False
+    # Exclude search, filter, collection, and category pages
+    if re.search(r"[?&][qk]w?=|/search[/?$]|/filter|/category|/collections?[/?]", href, re.I):
+        return False
+    # Product URLs have at least 2 non-empty path segments; category/nav pages usually have 1
+    path_parts = [p for p in urlparse(href).path.split("/") if p]
+    if len(path_parts) < 2:
+        return False
+    # Last path segment should be a meaningful slug (≥8 chars); short segments are
+    # category words like "red", "white", "new", "gin" rather than product slugs
+    if len(path_parts[-1]) < 8:
+        return False
     text = link.get_text(strip=True)
     if len(text) < 8:
         return False
@@ -122,22 +165,83 @@ def _is_product_link(link: Tag, base_domain: str) -> bool:
     return not any(word in text_lower for word in PRICE_LABEL_WORDS)
 
 
+# Bootstrap / Tailwind utility-class prefixes and standalone words that indicate
+# layout helpers rather than semantic product containers.  A first class matching
+# this pattern is skipped in favour of a deeper, more specific ancestor.
+_UTILITY_CLS = re.compile(
+    r"^(?:col|row|d|g|gap|order|offset|flex|justify|align|"
+    r"ms|me|mt|mb|mx|my|ps|pe|pt|pb|px|py|fs|fw|lh|bg|text|border|"
+    r"rounded|shadow|w|h|mw|mh|vw|vh|position|top|bottom|start|end|"
+    r"float|overflow|visible|z|font|ring|space|divide|transition|"
+    r"duration|ease|delay|animate|scale|rotate|translate|skew|origin|"
+    r"cursor|select|pointer|resize|appearance|list|object|aspect|"
+    r"columns|break|decoration|indent|content|sr|not)-"
+    r"|^(?:container(?:-fluid)?|row|clearfix|active|show|hide|disabled|fade|"
+    r"flex|block|inline|grid|hidden|table|contents|"
+    r"grow|shrink|truncate|relative|absolute|fixed|sticky|static|"
+    r"visible|invisible|antialiased|italic|underline|overline|"
+    r"line-through|uppercase|lowercase|capitalize|normal-case|"
+    r"tracking|leading|whitespace|break-all|break-normal|break-words)$",
+    re.I,
+)
+
+
+def _is_semantic_cls(cls: str) -> bool:
+    return bool(cls) and not _UTILITY_CLS.match(cls)
+
+
 def _find_container(price_el: Tag, base_domain: str) -> tuple[Tag, int] | None:
     """
-    Walk up from price_el up to depth 15.
-    Return (ancestor, depth) for the first ancestor that contains BOTH
-    a product-name link (substantial text, not a price label) AND a price.
+    Walk up from price_el up to depth 15 looking for an ancestor that has BOTH
+    a product-name link and a price.
+
+    Strategy:
+    - Prefer the shallowest ancestor whose CSS class is semantic (BEM-style, not a
+      Bootstrap/Tailwind utility) — that is the named product container.
+    - Fall back to the first utility-classed or classless ancestor (first_match).
+    - Stop searching for a semantic class if we have already found first_match and
+      have walked ≥4 more levels without finding one — that avoids latching onto
+      broad page-level wrappers like <main> or <section>.
+
+    Also checks the previous sibling at each level to support flat-list layouts
+    (common on pure Tailwind sites) where the product title link lives in a sibling
+    div rather than inside the price container.
     """
+    first_match: tuple[Tag, int] | None = None
     el = price_el
     for depth in range(1, 16):
         el = el.parent
         if el is None or el.name in ("html", "body"):
             break
-        has_product_link = any(_is_product_link(a, base_domain) for a in el.find_all("a", href=True))
         has_price = bool(PRICE_RE.search(el.get_text()))
-        if has_product_link and has_price:
-            return el, depth
-    return None
+        if not has_price:
+            continue
+        has_product_link = any(_is_product_link(a, base_domain) for a in el.find_all("a", href=True))
+        if not has_product_link:
+            # find_previous_sibling(True) skips text/comment nodes and finds the nearest Tag
+            prev_sib = el.find_previous_sibling(True)
+            if isinstance(prev_sib, Tag):
+                has_product_link = any(
+                    _is_product_link(a, base_domain) for a in prev_sib.find_all("a", href=True)
+                )
+        if not has_product_link:
+            continue
+        # Compute first class that is valid in a CSS selector (skip Tailwind responsive
+        # variants like lg:flex, hover:text-blue, and important modifiers like !px-2)
+        css_classes = [
+            c for c in (el.get("class") or [])
+            if ":" not in c and "/" not in c and not c.startswith("!")
+        ]
+        first_cls = css_classes[0] if css_classes else ""
+        if _is_semantic_cls(first_cls):
+            return el, depth          # best: satisfies condition + semantic class
+        if first_match is None:
+            first_match = (el, depth)
+        elif depth > first_match[1] + 3:
+            # Gone 4+ levels past the first utility match without finding a semantic
+            # class — the broad page container is not the product card; stop here.
+            break
+    return first_match
 
 
 def _best_container_selector(price_nodes: list[Tag], base_domain: str) -> str | None:
@@ -179,7 +283,7 @@ def _name_selector(card: Tag) -> str | None:
                 return _css_selector(el) or el.name
 
     # 2. Fall back to heading or link with substantial non-label text
-    for tag in ["h1", "h2", "h3", "h4", "a"]:
+    for tag in ["h1", "h2", "h3", "h4"]:
         for el in card.find_all(tag):
             text = el.get_text(strip=True)
             if len(text) < 8:
@@ -187,14 +291,38 @@ def _name_selector(card: Tag) -> str | None:
             if any(word in text.lower() for word in PRICE_LABEL_WORDS):
                 continue
             return _css_selector(el) or tag
+
+    # For <a> links, apply the same URL quality filter as _is_product_link so we
+    # don't pick up rating anchors (/search?q=…), shelf links (/shelf/), or
+    # category pages (/wine/) as the "product name".
+    for el in card.find_all("a", href=True):
+        href = el.get("href", "")
+        if re.search(r"[?&][qk]w?=|/search[/?$]|/filter|/category", href, re.I):
+            continue
+        path_parts = [p for p in urlparse(href).path.split("/") if p]
+        if len(path_parts) < 2:
+            continue
+        text = el.get_text(strip=True)
+        if len(text) < 8:
+            continue
+        if any(word in text.lower() for word in PRICE_LABEL_WORDS):
+            continue
+        return _css_selector(el) or "a"
     return None
 
 
+_WAS_PRICE_CLS = re.compile(r"line-through|strike|was[-_]?price|original[-_]?price|compare[-_]?price|old[-_]?price", re.I)
+
+
 def _price_selector(card: Tag) -> str | None:
-    """Find the element containing the price string inside a card."""
+    """Find the element containing the current (non-strikethrough) price inside a card."""
     for string in card.find_all(string=PRICE_RE):
         parent = string.parent
         if not isinstance(parent, Tag) or parent.name == "a":
+            continue
+        # Skip "was price" / strikethrough elements — we want the current sale price
+        parent_cls = " ".join(parent.get("class") or [])
+        if _WAS_PRICE_CLS.search(parent_cls):
             continue
         direct_sel = _css_selector(parent)
         if direct_sel and "." in direct_sel:
@@ -382,6 +510,81 @@ def _generate_code(
     return "\n".join(lines)
 
 
+def _generate_prev_sibling_code(
+    class_name: str,
+    store_name: str,
+    base_url: str,
+    search_url_template: str,
+    container_sel: str,
+) -> str:
+    """
+    Code generator for flat-list layouts where the product name link lives in the
+    previous sibling element rather than inside the price container.
+    Iterates price containers; fetches name from find_previous_sibling().
+    """
+    lines = [
+        "import re",
+        "",
+        "from bs4 import BeautifulSoup",
+        "from playwright.async_api import Page",
+        "",
+        "from .base import BottleResult, StoreScraper",
+        "",
+        "",
+        f"class {class_name}(StoreScraper):",
+        f"    name = {store_name!r}",
+        f"    _base = {base_url!r}",
+        f"    _search_url = {search_url_template!r}",
+        "",
+        "    async def search(self, page: Page, query: str) -> list[BottleResult]:",
+        '        await page.goto(self._search_url.format(query=query.replace(" ", "+")))',
+        '        await page.wait_for_load_state("networkidle")',
+        '        soup = BeautifulSoup(await page.content(), "html.parser")',
+        "        return self._parse(soup)",
+        "",
+        "    def _parse(self, soup: BeautifulSoup) -> list[BottleResult]:",
+        "        results = []",
+        "        seen_urls: set[str] = set()",
+        f"        for card in soup.select({container_sel!r}):",
+        "            prev = card.find_previous_sibling()",
+        "            if not prev:",
+        "                continue",
+        '            name_el = prev.find("a", href=True)',
+        "            if not name_el:",
+        "                continue",
+        "            name = name_el.get_text(strip=True)",
+        "            if not name:",
+        "                continue",
+        '            url = name_el.get("href", "")',
+        '            if url and not url.startswith("http"):',
+        "                url = self._base + url",
+        "            if url in seen_urls:",
+        "                continue",
+        "            seen_urls.add(url)",
+        "            price_el = None",
+        "            for _s in card.find_all(string=re.compile(r'\\$[\\d,]+\\.\\d{2}')):",
+        "                _p = _s.parent",
+        "                if _p and 'line-through' not in ' '.join(_p.get('class') or []):",
+        "                    price_el = _p",
+        "                    break",
+        "            if not price_el:",
+        "                continue",
+        r'            m = re.search(r"[\d,]+\.?\d*", price_el.get_text())',
+        "            if not m:",
+        "                continue",
+        "            results.append(BottleResult(",
+        "                store_name=self.name,",
+        "                bottle_name=name,",
+        '                price=float(m.group().replace(",", "")),',
+        "                url=url,",
+        "                in_stock=True,",
+        "            ))",
+        "        return results",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 # ── hot-load ──────────────────────────────────────────────────────────────────
 
 def _hot_load(file_path: Path) -> StoreScraper | None:
@@ -420,10 +623,14 @@ async def add_store(url: str, context: BrowserContext, custom_name: str = "") ->
     page = await context.new_page()
     try:
         # ── Stage 1: find search URL ──────────────────────────────────────
-        await page.goto(url, timeout=30000)
-        await page.wait_for_load_state("networkidle")
+        await page.goto(url, wait_until="domcontentloaded", timeout=30000)
         page_title = await page.title()
-        homepage_soup = BeautifulSoup(await page.content(), "html.parser")
+        homepage_html = await page.content()
+        homepage_soup = BeautifulSoup(homepage_html, "html.parser")
+
+        _check_blocked(homepage_html, page.url)
+
+        await page.wait_for_load_state("networkidle", timeout=15000)
 
         search_url_template = await _discover_search_url(page, base_url, base_domain)
         if not search_url_template:
@@ -439,11 +646,24 @@ async def add_store(url: str, context: BrowserContext, custom_name: str = "") ->
 
         # ── Stage 3: detect selectors ─────────────────────────────────────
         soup = BeautifulSoup(raw_html, "html.parser")
+        store_name = custom_name.strip() if custom_name.strip() else _extract_store_name(homepage_soup, page_title)
+        class_name = _domain_to_class(base_domain)
+        slug = _domain_to_slug(base_domain)
 
         # Try known platform templates first — they yield more reliable selectors.
         template_result = _match_template(raw_html, search_url_template, soup)
         if template_result:
             container_sel, name_sel, price_sel, url_sel = template_result
+            code = _generate_code(
+                class_name=class_name,
+                store_name=store_name,
+                base_url=base_url,
+                search_url_template=search_url_template,
+                container_sel=container_sel,
+                name_sel=name_sel,
+                price_sel=price_sel,
+                url_sel=url_sel,
+            )
         else:
             # Generic heuristic fallback.
             _strip_html(soup)
@@ -459,36 +679,58 @@ async def add_store(url: str, context: BrowserContext, custom_name: str = "") ->
                 )
 
             sample_cards = soup.select(container_sel)
-            name_sel = _name_selector(sample_cards[0]) if sample_cards else None
-            price_sel = _price_selector(sample_cards[0]) if sample_cards else None
+            # Some containers (e.g. search headers) share the selector but contain no price.
+            # Find the first card that has a detectable price so we pick real product cards.
+            first_card = next(
+                (sc for sc in sample_cards[:10] if _price_selector(sc) is not None),
+                sample_cards[0] if sample_cards else None,
+            )
+            name_sel = _name_selector(first_card) if first_card else None
+            price_sel = _price_selector(first_card) if first_card else None
 
-            if not name_sel or not price_sel:
+            if name_sel and price_sel:
+                # Standard mode: name and price are both inside the container.
+                name_el_sample = first_card.select_one(name_sel)
+                url_sel = None
+                if name_el_sample and name_el_sample.name != "a":
+                    url_sel = _url_selector(first_card, base_domain)
+                code = _generate_code(
+                    class_name=class_name,
+                    store_name=store_name,
+                    base_url=base_url,
+                    search_url_template=search_url_template,
+                    container_sel=container_sel,
+                    name_sel=name_sel,
+                    price_sel=price_sel,
+                    url_sel=url_sel,
+                )
+            elif price_sel and not name_sel:
+                # Flat-list mode: product name lives in the previous sibling of each
+                # price container (common on pure Tailwind / no-semantic-class sites).
+                prev_sib_has_link = any(
+                    any(_is_product_link(a, base_domain) for a in sc.find_previous_sibling(True).find_all("a", href=True))
+                    for sc in sample_cards[:10]
+                    if sc.find_previous_sibling(True) is not None
+                )
+                if not prev_sib_has_link:
+                    raise GeneratorError(
+                        f"Detected container ({container_sel}) but couldn't find name inside it.",
+                        "selectors",
+                    )
+                code = _generate_prev_sibling_code(
+                    class_name=class_name,
+                    store_name=store_name,
+                    base_url=base_url,
+                    search_url_template=search_url_template,
+                    container_sel=container_sel,
+                )
+            else:
                 raise GeneratorError(
                     f"Detected container ({container_sel}) but couldn't find name or price inside it.",
-                    "selectors"
+                    "selectors",
                 )
 
-            first_card = sample_cards[0]
-            name_el_sample = first_card.select_one(name_sel)
-            url_sel = None
-            if name_el_sample and name_el_sample.name != "a":
-                url_sel = _url_selector(first_card, base_domain)
-
-        # ── Stage 4: generate + save ──────────────────────────────────────
-        store_name = custom_name.strip() if custom_name.strip() else _extract_store_name(homepage_soup, page_title)
-        class_name = _domain_to_class(base_domain)
-        slug = _domain_to_slug(base_domain)
-
-        code = _generate_code(
-            class_name=class_name,
-            store_name=store_name,
-            base_url=base_url,
-            search_url_template=search_url_template,
-            container_sel=container_sel,
-            name_sel=name_sel,
-            price_sel=price_sel,
-            url_sel=url_sel,
-        )
+        # ── Stage 4: save ─────────────────────────────────────────────────
 
         file_path = SCRAPERS_DIR / f"{slug}.py"
         file_path.write_text(code)
