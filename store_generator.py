@@ -764,9 +764,13 @@ async def _discover_search_url(page, base_url: str, base_domain: str) -> str | N
     # Try submitting the search form
     inputs = await page.query_selector_all("input")
     for inp in inputs:
-        type_ = (await inp.get_attribute("type") or "").lower()
-        name = (await inp.get_attribute("name") or "").lower()
-        placeholder = (await inp.get_attribute("placeholder") or "").lower()
+        try:
+            type_ = (await inp.get_attribute("type") or "").lower()
+            name = (await inp.get_attribute("name") or "").lower()
+            placeholder = (await inp.get_attribute("placeholder") or "").lower()
+        except Exception:
+            # Handle is stale (page navigated during a previous iteration)
+            break
         if type_ in ("hidden", "submit", "checkbox", "radio", "password"):
             continue
         if any(kw in name or kw in placeholder or type_ == "search"
@@ -781,7 +785,7 @@ async def _discover_search_url(page, base_url: str, base_domain: str) -> str | N
             except Exception:
                 pass
             # Reload and try next input
-            await page.goto(page.url.split("?")[0], timeout=15000)
+            await page.goto(base_url, timeout=15000)
             await page.wait_for_load_state("networkidle")
 
     # Fallback: try common GET patterns

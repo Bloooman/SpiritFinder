@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import time
 from contextlib import asynccontextmanager
@@ -18,6 +19,29 @@ from store_generator import GeneratorError, add_store
 log = logging.getLogger("spiritfinder")
 
 _context: BrowserContext | None = None
+
+_MANUAL_FILE = Path("manual_entries.json")
+_SAVED_FILE  = Path("saved_list.json")
+
+def _load_json_file(path: Path) -> list[dict]:
+    if path.exists():
+        try:
+            return json.loads(path.read_text())
+        except Exception:
+            return []
+    return []
+
+def _save_json_file(path: Path, data: list[dict]) -> None:
+    path.write_text(json.dumps(data, indent=2))
+
+_manual_entries: list[dict] = _load_json_file(_MANUAL_FILE)
+_saved_list:     list[dict] = _load_json_file(_SAVED_FILE)
+
+def _load_manual_entries() -> list[dict]:
+    return _load_json_file(_MANUAL_FILE)
+
+def _save_manual_entries(entries: list[dict]) -> None:
+    _save_json_file(_MANUAL_FILE, entries)
 
 _BROWSER_UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -177,12 +201,79 @@ async def search(req: SearchRequest) -> list[ResultItem]:
 
     all_results: list[ResultItem] = [item for store in per_store for item in store]
 
+    tokens = _query_tokens(req.query)
+
+    # Inject matching manual entries
+    for entry in _manual_entries:
+        if _relevant(entry["bottle_name"], tokens):
+            all_results.append(ResultItem(
+                store_name=entry["store_name"],
+                bottle_name=entry["bottle_name"],
+                price=entry.get("price"),
+                url=entry.get("url", ""),
+                in_stock=entry.get("in_stock", True),
+                size=entry.get("size"),
+            ))
+
     priced = [r for r in all_results if not r.error and r.price is not None]
     errors = [r for r in all_results if r.error]
 
-    tokens = _query_tokens(req.query)
     priced.sort(key=lambda r: (-_relevance_score(r.bottle_name, tokens), r.price or 0.0))
     return priced + errors
+
+
+class ManualEntryRequest(BaseModel):
+    store_name: str
+    bottle_name: str
+    price: float
+    size: str = ""
+    in_stock: bool = True
+    url: str = ""
+
+
+@app.post("/manual-entry")
+async def add_manual_entry(req: ManualEntryRequest):
+    entry = {
+        "store_name": req.store_name,
+        "bottle_name": req.bottle_name,
+        "price": req.price,
+        "size": req.size or None,
+        "in_stock": req.in_stock,
+        "url": req.url or "",
+    }
+    _manual_entries.append(entry)
+    _save_manual_entries(_manual_entries)
+    return {"ok": True}
+
+
+@app.get("/manual-entries")
+async def list_manual_entries():
+    return _manual_entries
+
+
+@app.delete("/manual-entry/{index}")
+async def delete_manual_entry(index: int):
+    if index < 0 or index >= len(_manual_entries):
+        return JSONResponse(status_code=404, content={"ok": False})
+    _manual_entries.pop(index)
+    _save_manual_entries(_manual_entries)
+    return {"ok": True}
+
+
+@app.put("/manual-entry/{index}")
+async def update_manual_entry(index: int, req: ManualEntryRequest):
+    if index < 0 or index >= len(_manual_entries):
+        return JSONResponse(status_code=404, content={"ok": False})
+    _manual_entries[index] = {
+        "store_name": req.store_name,
+        "bottle_name": req.bottle_name,
+        "price": req.price,
+        "size": req.size or None,
+        "in_stock": req.in_stock,
+        "url": req.url or "",
+    }
+    _save_manual_entries(_manual_entries)
+    return {"ok": True}
 
 
 @app.get("/suggest")
@@ -271,6 +362,48 @@ async def rename_store(req: RenameRequest):
 class AddStoreRequest(BaseModel):
     url: str
     name: str = ""
+
+
+class SavedItemRequest(BaseModel):
+    store_name: str
+    bottle_name: str
+    price: float | None = None
+    size: str | None = None
+    url: str = ""
+    in_stock: bool = True
+    notes: str = ""
+
+
+@app.get("/saved-list")
+async def get_saved_list():
+    return _saved_list
+
+
+@app.post("/saved-list")
+async def add_saved_item(req: SavedItemRequest):
+    item = req.model_dump()
+    _saved_list.append(item)
+    _save_json_file(_SAVED_FILE, _saved_list)
+    return {"ok": True, "index": len(_saved_list) - 1}
+
+
+@app.delete("/saved-list/{index}")
+async def delete_saved_item(index: int):
+    if index < 0 or index >= len(_saved_list):
+        return JSONResponse(status_code=404, content={"ok": False})
+    _saved_list.pop(index)
+    _save_json_file(_SAVED_FILE, _saved_list)
+    return {"ok": True}
+
+
+@app.patch("/saved-list/{index}")
+async def update_saved_notes(index: int, body: dict):
+    if index < 0 or index >= len(_saved_list):
+        return JSONResponse(status_code=404, content={"ok": False})
+    if "notes" in body:
+        _saved_list[index]["notes"] = body["notes"]
+    _save_json_file(_SAVED_FILE, _saved_list)
+    return {"ok": True}
 
 
 @app.post("/add-store")

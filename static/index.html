@@ -138,6 +138,118 @@
     .empty { text-align: center; padding: 3rem; color: #999; display: none; }
     .empty.active { display: block; }
 
+    /* ── saved list ── */
+    .save-btn {
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: 1.1rem;
+      line-height: 1;
+      padding: 0 0.15rem;
+      color: #ccc;
+      transition: color 0.15s, transform 0.1s;
+      vertical-align: middle;
+    }
+    .save-btn:hover { color: #e8a020; transform: scale(1.2); }
+    .save-btn.saved { color: #e8a020; }
+    .saved-item {
+      border-radius: 6px;
+      border: 1px solid #e8e0d6;
+      overflow: hidden;
+      margin-bottom: 0.35rem;
+    }
+    .saved-item-row {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.88rem;
+      background: #f9f6f2;
+      padding: 0.4rem 0.7rem;
+    }
+    .saved-notes-row {
+      display: none;
+      padding: 0.4rem 0.7rem;
+      background: #fff9f0;
+    }
+    .saved-notes-row.open { display: flex; gap: 0.4rem; align-items: center; }
+    .saved-notes-input {
+      flex: 1;
+      padding: 0.25rem 0.5rem;
+      border: 1.5px solid #ddd;
+      border-radius: 5px;
+      font-size: 0.85rem;
+      outline: none;
+      background: #fff;
+    }
+    .saved-notes-input:focus { border-color: #5a3e28; }
+
+    /* ── manual entry ── */
+    .manual-btn {
+      margin-left: 0.6rem;
+      padding: 0.15rem 0.5rem;
+      font-size: 0.75rem;
+      background: none;
+      border: 1px solid #c0392b;
+      color: #c0392b;
+      border-radius: 4px;
+      cursor: pointer;
+      vertical-align: middle;
+      transition: background 0.15s, color 0.15s;
+    }
+    .manual-btn:hover { background: #c0392b; color: #fff; }
+    .manual-entry-row td { background: #fff9f0 !important; }
+    .manual-form {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      align-items: center;
+      padding: 0.25rem 0;
+    }
+    .manual-form input[type="text"],
+    .manual-form input[type="number"],
+    .manual-form input[type="url"] {
+      padding: 0.3rem 0.55rem;
+      border: 1.5px solid #ccc;
+      border-radius: 6px;
+      font-size: 0.88rem;
+      outline: none;
+    }
+    .manual-form input:focus { border-color: #5a3e28; }
+    .manual-form label { font-size: 0.82rem; color: #555; display: flex; align-items: center; gap: 0.3rem; }
+    .manual-save-btn {
+      padding: 0.3rem 0.8rem;
+      background: #5a3e28;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      font-size: 0.88rem;
+      cursor: pointer;
+    }
+    .manual-save-btn:hover { background: #3e2a18; }
+    .manual-cancel-btn {
+      padding: 0.3rem 0.6rem;
+      background: none;
+      border: 1px solid #bbb;
+      border-radius: 6px;
+      font-size: 0.88rem;
+      cursor: pointer;
+      color: #555;
+    }
+    .manual-cancel-btn:hover { background: #eee; }
+    .manual-badge {
+      display: inline-block;
+      background: #e8a020;
+      color: #fff;
+      font-size: 0.62rem;
+      font-weight: 700;
+      padding: 0.12rem 0.35rem;
+      border-radius: 4px;
+      margin-left: 0.4rem;
+      vertical-align: middle;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
     /* ── add-store panel ── */
     .add-store-wrap {
       max-width: 600px;
@@ -278,13 +390,56 @@
       <thead>
         <tr>
           <th>Store</th><th>Bottle</th><th>Price</th>
-          <th>Size</th><th>In Stock</th><th>Link</th>
+          <th>Size</th><th>In Stock</th><th>Link</th><th></th>
         </tr>
       </thead>
       <tbody id="results-body"></tbody>
     </table>
   </div>
   <div class="empty" id="empty-msg">No results found. Try a different search term.</div>
+
+  <!-- ── Saved List panel ── -->
+  <div class="add-store-wrap">
+    <button class="add-store-toggle" id="saved-toggle-btn" type="button">
+      <span>Saved List</span>
+      <span id="saved-count-badge" style="display:none;background:#e8a020;color:#fff;font-size:0.72rem;font-weight:700;padding:0.1rem 0.45rem;border-radius:10px;margin-left:0.4rem"></span>
+      <span class="arrow">▾</span>
+    </button>
+    <div class="add-store-panel" id="saved-panel">
+      <div id="saved-empty" style="font-size:0.88rem;color:#999;padding:0.5rem 0">
+        No saved entries yet — star a result row to save it here.
+      </div>
+      <div id="saved-entries"></div>
+    </div>
+  </div>
+
+  <!-- ── Add Manual Entry panel ── -->
+  <div class="add-store-wrap">
+    <button class="add-store-toggle" id="manual-toggle-btn" type="button">
+      <span>Add Manual Entry</span>
+      <span class="arrow">▾</span>
+    </button>
+    <div class="add-store-panel" id="manual-panel">
+      <div class="manual-form" id="persistent-manual-form" style="flex-direction:column;align-items:stretch;gap:0.5rem">
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
+          <input type="text" id="pm-store" placeholder="Store name" style="flex:1;min-width:10rem" />
+          <input type="text" id="pm-name" placeholder="Bottle name" style="flex:2;min-width:14rem" />
+        </div>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center">
+          <input type="number" id="pm-price" placeholder="Price $" step="0.01" min="0" style="width:8rem" />
+          <input type="text" id="pm-size" placeholder="Size (e.g. 750ml)" style="width:9rem" />
+          <input type="url" id="pm-url" placeholder="URL (optional)" style="flex:1;min-width:12rem" />
+          <label style="font-size:0.85rem;color:#555;display:flex;align-items:center;gap:0.3rem">
+            <input type="checkbox" id="pm-stock" checked /> In stock
+          </label>
+          <button class="manual-save-btn" id="pm-save-btn">Save Entry</button>
+        </div>
+      </div>
+      <div id="pm-status" style="margin-top:0.5rem;font-size:0.85rem;min-height:1.2em"></div>
+      <div id="pm-entries-label" style="font-size:0.78rem;color:#999;margin-top:1rem;text-transform:uppercase;letter-spacing:0.05em;display:none">Saved manual entries</div>
+      <div id="pm-entries" style="margin-top:0.5rem;display:flex;flex-direction:column;gap:0.35rem"></div>
+    </div>
+  </div>
 
   <!-- ── Add Store panel ── -->
   <div class="add-store-wrap">
@@ -387,6 +542,244 @@
       } catch {}
     }
     refreshChips();
+
+    // ── saved list ───────────────────────────────────────────────────────────
+    const savedToggleBtn = document.getElementById('saved-toggle-btn');
+    const savedPanel     = document.getElementById('saved-panel');
+    savedToggleBtn.addEventListener('click', () => {
+      const open = savedPanel.classList.toggle('open');
+      savedToggleBtn.classList.toggle('open', open);
+    });
+
+    async function refreshSavedList() {
+      const res  = await fetch('/saved-list');
+      const list = await res.json();
+      const container = document.getElementById('saved-entries');
+      const emptyEl   = document.getElementById('saved-empty');
+      const badge     = document.getElementById('saved-count-badge');
+      container.innerHTML = '';
+      emptyEl.style.display  = list.length ? 'none' : '';
+      badge.style.display    = list.length ? '' : 'none';
+      badge.textContent      = list.length;
+
+      list.forEach((e, i) => {
+        const wrap = document.createElement('div');
+        wrap.className = 'saved-item';
+
+        const row = document.createElement('div');
+        row.className = 'saved-item-row';
+        row.innerHTML = `
+          <span style="font-weight:600;color:#3e2a18">${esc(e.store_name)}</span>
+          <span style="color:#ccc">|</span>
+          <span style="flex:1">${esc(e.bottle_name)}</span>
+          ${e.price != null ? `<span style="font-weight:700">${fmt(e.price)}</span>` : ''}
+          ${e.size  ? `<span style="color:#888">${esc(e.size)}</span>` : ''}
+          ${e.url   ? `<a class="product-link" href="${esc(e.url)}" target="_blank" rel="noreferrer" style="font-size:0.82rem">View →</a>` : ''}
+        `;
+
+        // Notes toggle
+        const notesBtn = document.createElement('button');
+        notesBtn.title = e.notes ? 'Edit note' : 'Add note';
+        notesBtn.textContent = e.notes ? '📝' : '✎';
+        notesBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:0.9rem;color:#aaa;padding:0';
+        notesBtn.addEventListener('mouseover', () => { notesBtn.style.color = '#5a3e28'; });
+        notesBtn.addEventListener('mouseout',  () => { notesBtn.style.color = '#aaa'; });
+
+        // Remove button
+        const delBtn = document.createElement('button');
+        delBtn.textContent = '✕';
+        delBtn.title = 'Remove from saved list';
+        delBtn.style.cssText = 'background:none;border:none;color:#ccc;cursor:pointer;font-size:0.9rem;padding:0 0.1rem';
+        delBtn.addEventListener('mouseover', () => { delBtn.style.color = '#c0392b'; });
+        delBtn.addEventListener('mouseout',  () => { delBtn.style.color = '#ccc'; });
+        delBtn.addEventListener('click', async () => {
+          await fetch('/saved-list/' + i, { method: 'DELETE' });
+          refreshSavedList();
+        });
+
+        row.appendChild(notesBtn);
+        row.appendChild(delBtn);
+
+        // Notes row
+        const notesRow = document.createElement('div');
+        notesRow.className = 'saved-notes-row' + (e.notes ? ' open' : '');
+        const notesInput = document.createElement('input');
+        notesInput.type = 'text';
+        notesInput.className = 'saved-notes-input';
+        notesInput.placeholder = 'Add a note…';
+        notesInput.value = e.notes || '';
+        const notesSave = document.createElement('button');
+        notesSave.textContent = 'Save';
+        notesSave.className = 'manual-save-btn';
+        notesSave.style.cssText = 'font-size:0.8rem;padding:0.25rem 0.65rem';
+        notesSave.addEventListener('click', async () => {
+          await fetch('/saved-list/' + i, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ notes: notesInput.value.trim() }),
+          });
+          refreshSavedList();
+        });
+        notesInput.addEventListener('keydown', e => { if (e.key === 'Enter') notesSave.click(); });
+        notesRow.appendChild(notesInput);
+        notesRow.appendChild(notesSave);
+
+        notesBtn.addEventListener('click', () => {
+          notesRow.classList.toggle('open');
+          if (notesRow.classList.contains('open')) notesInput.focus();
+        });
+
+        wrap.appendChild(row);
+        wrap.appendChild(notesRow);
+        container.appendChild(wrap);
+      });
+    }
+    refreshSavedList();
+
+    // ── manual entry panel (persistent) ─────────────────────────────────────
+    const manualToggleBtn = document.getElementById('manual-toggle-btn');
+    const manualPanel     = document.getElementById('manual-panel');
+    manualToggleBtn.addEventListener('click', () => {
+      const open = manualPanel.classList.toggle('open');
+      manualToggleBtn.classList.toggle('open', open);
+    });
+
+    async function refreshManualEntries() {
+      const res  = await fetch('/manual-entries');
+      const list = await res.json();
+      const container = document.getElementById('pm-entries');
+      const labelEl2  = document.getElementById('pm-entries-label');
+      container.innerHTML = '';
+      labelEl2.style.display = list.length ? 'block' : 'none';
+
+      list.forEach((e, i) => {
+        const wrap = document.createElement('div');
+        wrap.style.cssText = 'border-radius:6px;overflow:hidden;border:1px solid #e8e0d6';
+
+        // ── display row ──
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:0.5rem;font-size:0.88rem;background:#f9f6f2;padding:0.35rem 0.6rem';
+        row.innerHTML = `
+          <span style="font-weight:600;color:#3e2a18">${esc(e.store_name)}</span>
+          <span style="color:#ccc">|</span>
+          <span>${esc(e.bottle_name)}</span>
+          <span style="font-weight:700">${fmt(e.price)}</span>
+          ${e.size ? `<span style="color:#888">${esc(e.size)}</span>` : ''}
+          ${e.in_stock ? '' : '<span style="color:#c0392b;font-size:0.8rem">out of stock</span>'}
+        `;
+
+        const editBtn = document.createElement('button');
+        editBtn.textContent = '✎ Edit';
+        editBtn.title = 'Edit';
+        editBtn.style.cssText = 'margin-left:auto;background:none;border:1px solid #bbb;border-radius:4px;color:#555;cursor:pointer;font-size:0.78rem;padding:0.1rem 0.45rem;white-space:nowrap';
+        editBtn.addEventListener('mouseover', () => { editBtn.style.borderColor='#5a3e28'; editBtn.style.color='#5a3e28'; });
+        editBtn.addEventListener('mouseout',  () => { editBtn.style.borderColor='#bbb';    editBtn.style.color='#555'; });
+
+        const delBtn = document.createElement('button');
+        delBtn.textContent = '✕';
+        delBtn.title = 'Remove';
+        delBtn.style.cssText = 'background:none;border:none;color:#ccc;cursor:pointer;font-size:0.9rem;padding:0 0.15rem';
+        delBtn.addEventListener('mouseover', () => { delBtn.style.color='#c0392b'; });
+        delBtn.addEventListener('mouseout',  () => { delBtn.style.color='#ccc'; });
+        delBtn.addEventListener('click', async () => {
+          await fetch('/manual-entry/' + i, { method: 'DELETE' });
+          refreshManualEntries();
+        });
+
+        row.appendChild(editBtn);
+        row.appendChild(delBtn);
+
+        // ── edit form (hidden by default) ──
+        const editRow = document.createElement('div');
+        editRow.style.cssText = 'display:none;background:#fff9f0;padding:0.6rem 0.7rem';
+        editRow.innerHTML = `
+          <div style="display:flex;gap:0.4rem;flex-wrap:wrap;margin-bottom:0.4rem">
+            <input type="text" class="ef-store" value="${esc(e.store_name)}" placeholder="Store name" style="flex:1;min-width:9rem;padding:0.28rem 0.5rem;border:1.5px solid #ccc;border-radius:5px;font-size:0.85rem;outline:none" />
+            <input type="text" class="ef-name" value="${esc(e.bottle_name)}" placeholder="Bottle name" style="flex:2;min-width:12rem;padding:0.28rem 0.5rem;border:1.5px solid #ccc;border-radius:5px;font-size:0.85rem;outline:none" />
+          </div>
+          <div style="display:flex;gap:0.4rem;flex-wrap:wrap;align-items:center">
+            <input type="number" class="ef-price" value="${e.price}" step="0.01" min="0" placeholder="Price $" style="width:7rem;padding:0.28rem 0.5rem;border:1.5px solid #ccc;border-radius:5px;font-size:0.85rem;outline:none" />
+            <input type="text" class="ef-size" value="${esc(e.size||'')}" placeholder="Size" style="width:8rem;padding:0.28rem 0.5rem;border:1.5px solid #ccc;border-radius:5px;font-size:0.85rem;outline:none" />
+            <input type="url" class="ef-url" value="${esc(e.url||'')}" placeholder="URL (optional)" style="flex:1;min-width:11rem;padding:0.28rem 0.5rem;border:1.5px solid #ccc;border-radius:5px;font-size:0.85rem;outline:none" />
+            <label style="font-size:0.82rem;color:#555;display:flex;align-items:center;gap:0.25rem">
+              <input type="checkbox" class="ef-stock" ${e.in_stock ? 'checked' : ''} /> In stock
+            </label>
+            <button class="ef-save manual-save-btn" style="font-size:0.82rem;padding:0.28rem 0.7rem">Save</button>
+            <button class="ef-cancel manual-cancel-btn" style="font-size:0.82rem;padding:0.28rem 0.6rem">Cancel</button>
+          </div>
+        `;
+
+        editBtn.addEventListener('click', () => {
+          editRow.style.display = editRow.style.display === 'none' ? 'block' : 'none';
+        });
+
+        editRow.querySelector('.ef-cancel').addEventListener('click', () => {
+          editRow.style.display = 'none';
+        });
+
+        editRow.querySelector('.ef-save').addEventListener('click', async () => {
+          const store = editRow.querySelector('.ef-store').value.trim();
+          const name  = editRow.querySelector('.ef-name').value.trim();
+          const price = parseFloat(editRow.querySelector('.ef-price').value);
+          if (!store || !name || isNaN(price)) return;
+          await fetch('/manual-entry/' + i, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              store_name: store,
+              bottle_name: name,
+              price,
+              size: editRow.querySelector('.ef-size').value.trim(),
+              in_stock: editRow.querySelector('.ef-stock').checked,
+              url: editRow.querySelector('.ef-url').value.trim(),
+            }),
+          });
+          refreshManualEntries();
+        });
+
+        wrap.appendChild(row);
+        wrap.appendChild(editRow);
+        container.appendChild(wrap);
+      });
+    }
+    refreshManualEntries();
+
+    document.getElementById('pm-save-btn').addEventListener('click', async () => {
+      const store = document.getElementById('pm-store').value.trim();
+      const name  = document.getElementById('pm-name').value.trim();
+      const price = parseFloat(document.getElementById('pm-price').value);
+      const statusEl2 = document.getElementById('pm-status');
+
+      if (!store || !name || isNaN(price)) {
+        statusEl2.style.color = '#c0392b';
+        statusEl2.textContent = 'Store name, bottle name, and price are required.';
+        return;
+      }
+
+      await fetch('/manual-entry', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          store_name: store,
+          bottle_name: name,
+          price,
+          size: document.getElementById('pm-size').value.trim(),
+          in_stock: document.getElementById('pm-stock').checked,
+          url: document.getElementById('pm-url').value.trim(),
+        }),
+      });
+
+      document.getElementById('pm-store').value  = '';
+      document.getElementById('pm-name').value   = '';
+      document.getElementById('pm-price').value  = '';
+      document.getElementById('pm-size').value   = '';
+      document.getElementById('pm-url').value    = '';
+      document.getElementById('pm-stock').checked = true;
+      statusEl2.style.color = '#27ae60';
+      statusEl2.textContent = `✓ Saved "${name}" — will appear in future searches.`;
+      setTimeout(() => { statusEl2.textContent = ''; }, 4000);
+      refreshManualEntries();
+    });
 
     // ── toggle panel ─────────────────────────────────────────────────────────
     const toggleBtn = document.getElementById('toggle-btn');
@@ -601,26 +994,152 @@
           priced.forEach((r, i) => {
             const isBest = r.price === lowestPrice && i === 0;
             const tr = document.createElement('tr');
+            tr.dataset.price = r.price;
             if (isBest) tr.classList.add('best-price');
             tr.innerHTML = `
               <td>${esc(r.store_name)}</td>
-              <td>${esc(r.bottle_name)}</td>
+              <td>${esc(r.bottle_name)}${r.manual ? '<span class="manual-badge">Manual</span>' : ''}</td>
               <td class="price-cell">${fmt(r.price)}${isBest ? '<span class="best-badge">Best</span>' : ''}</td>
               <td>${r.size ? esc(r.size) : '—'}</td>
               <td class="${r.in_stock ? 'stock-yes' : 'stock-no'}">${r.in_stock ? 'Yes' : 'No'}</td>
               <td>${r.url ? `<a class="product-link" href="${esc(r.url)}" target="_blank" rel="noreferrer">View →</a>` : '—'}</td>
+              <td></td>
             `;
+            // Star button — added via DOM so the click listener stays clean
+            const starTd  = tr.querySelector('td:last-child');
+            const starBtn = document.createElement('button');
+            starBtn.className = 'save-btn';
+            starBtn.title = 'Save to list';
+            starBtn.textContent = '☆';
+            starBtn.addEventListener('click', async () => {
+              if (starBtn.classList.contains('saved')) return;
+              starBtn.classList.add('saved');
+              starBtn.textContent = '★';
+              starBtn.title = 'Saved';
+              await fetch('/saved-list', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  store_name: r.store_name,
+                  bottle_name: r.bottle_name,
+                  price: r.price,
+                  size: r.size || null,
+                  url: r.url || '',
+                  in_stock: r.in_stock,
+                }),
+              });
+              refreshSavedList();
+            });
+            starTd.appendChild(starBtn);
             tbody.appendChild(tr);
           });
 
           errors.forEach(r => {
             const tr = document.createElement('tr');
             tr.classList.add('error-row');
+
+            const manualBtnId = 'mb-' + Math.random().toString(36).slice(2);
             tr.innerHTML = `
               <td>${esc(r.store_name)}</td>
-              <td colspan="5">Error: ${esc(r.error_message || 'scrape failed')}</td>
+              <td colspan="5">
+                Error: ${esc(r.error_message || 'scrape failed')}
+                <button class="manual-btn" id="${manualBtnId}">Enter manually</button>
+              </td>
             `;
             tbody.appendChild(tr);
+
+            // Insert a hidden form row right after the error row
+            const formTr = document.createElement('tr');
+            formTr.classList.add('manual-entry-row');
+            formTr.style.display = 'none';
+            formTr.innerHTML = `
+              <td colspan="6">
+                <div class="manual-form">
+                  <input type="text" placeholder="Bottle name" class="mf-name" style="width:16rem" />
+                  <input type="number" placeholder="Price $" class="mf-price" step="0.01" min="0" style="width:7rem" />
+                  <input type="text" placeholder="Size (e.g. 750ml)" class="mf-size" style="width:8rem" />
+                  <input type="url" placeholder="URL (optional)" class="mf-url" style="width:14rem" />
+                  <label><input type="checkbox" class="mf-stock" checked /> In stock</label>
+                  <button class="manual-save-btn">Save</button>
+                  <button class="manual-cancel-btn" type="button">Cancel</button>
+                </div>
+              </td>
+            `;
+            tbody.appendChild(formTr);
+
+            document.getElementById(manualBtnId).addEventListener('click', () => {
+              formTr.style.display = '';
+              formTr.querySelector('.mf-name').focus();
+            });
+
+            formTr.querySelector('.manual-cancel-btn').addEventListener('click', () => {
+              formTr.style.display = 'none';
+            });
+
+            formTr.querySelector('.manual-save-btn').addEventListener('click', async () => {
+              const name  = formTr.querySelector('.mf-name').value.trim();
+              const price = parseFloat(formTr.querySelector('.mf-price').value);
+              if (!name || isNaN(price)) {
+                formTr.querySelector('.mf-name').focus();
+                return;
+              }
+              const payload = {
+                store_name: r.store_name,
+                bottle_name: name,
+                price,
+                size: formTr.querySelector('.mf-size').value.trim(),
+                in_stock: formTr.querySelector('.mf-stock').checked,
+                url: formTr.querySelector('.mf-url').value.trim(),
+              };
+              await fetch('/manual-entry', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+              });
+
+              // Insert result row immediately, re-sort table
+              formTr.style.display = 'none';
+              tr.style.display = 'none';
+
+              const newTr = document.createElement('tr');
+              newTr.dataset.price = price;
+              newTr.dataset.manual = '1';
+              newTr.innerHTML = `
+                <td>${esc(r.store_name)}</td>
+                <td>${esc(name)}<span class="manual-badge">Manual</span></td>
+                <td class="price-cell">${fmt(price)}</td>
+                <td>${payload.size ? esc(payload.size) : '—'}</td>
+                <td class="${payload.in_stock ? 'stock-yes' : 'stock-no'}">${payload.in_stock ? 'Yes' : 'No'}</td>
+                <td>${payload.url ? `<a class="product-link" href="${esc(payload.url)}" target="_blank" rel="noreferrer">View →</a>` : '—'}</td>
+              `;
+
+              // Insert before the first error/manual row or at end of priced rows
+              const rows = Array.from(tbody.querySelectorAll('tr:not(.error-row):not(.manual-entry-row)'));
+              let inserted = false;
+              for (const row of rows) {
+                const rowPrice = parseFloat(row.dataset.price);
+                if (!isNaN(rowPrice) && price < rowPrice) {
+                  tbody.insertBefore(newTr, row);
+                  inserted = true;
+                  break;
+                }
+              }
+              if (!inserted) {
+                // Insert before first error row
+                const firstError = tbody.querySelector('.error-row');
+                if (firstError) tbody.insertBefore(newTr, firstError);
+                else tbody.appendChild(newTr);
+              }
+
+              // Update best-price highlighting
+              const allPriced = Array.from(tbody.querySelectorAll('tr:not(.error-row):not(.manual-entry-row)'));
+              allPriced.forEach(row => row.classList.remove('best-price'));
+              if (allPriced.length > 0) {
+                const bestRow = allPriced.reduce((a, b) =>
+                  parseFloat(a.dataset.price) <= parseFloat(b.dataset.price) ? a : b);
+                bestRow.classList.add('best-price');
+              }
+            });
           });
 
           const found = priced.length;
