@@ -54,7 +54,7 @@ _CACHE_TTL = 1800  # 30 minutes
 # (store_name, normalized_query) -> (monotonic_timestamp, results)
 _cache: dict[tuple[str, str], tuple[float, list]] = {}
 
-_scrape_sem = asyncio.Semaphore(5)
+_scrape_sem = asyncio.Semaphore(3)
 
 # Bottle names accumulated from all past searches for autocomplete
 _name_index: set[str] = set()
@@ -72,6 +72,11 @@ async def lifespan(app: FastAPI):
             "--disable-dev-shm-usage",
             "--no-sandbox",
             "--disable-setuid-sandbox",
+            "--no-zygote",
+            "--disable-gpu",
+            "--disable-extensions",
+            "--disable-software-rasterizer",
+            "--single-process",
         ],
     )
     _context = await browser.new_context(
