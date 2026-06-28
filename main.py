@@ -65,7 +65,10 @@ async def lifespan(app: FastAPI):
     pw = await async_playwright().start()
     browser = await pw.chromium.launch(
         headless=True,
-        args=["--disable-blink-features=AutomationControlled"],
+        args=[
+            "--disable-blink-features=AutomationControlled",
+            "--disable-dev-shm-usage",
+        ],
     )
     _context = await browser.new_context(
         user_agent=_BROWSER_UA,
