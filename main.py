@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import platform
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -65,19 +66,19 @@ async def lifespan(app: FastAPI):
     global _context
     logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(name)s  %(message)s")
     pw = await async_playwright().start()
+    linux_args = [
+        "--disable-dev-shm-usage",
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--no-zygote",
+        "--disable-gpu",
+        "--disable-extensions",
+        "--disable-software-rasterizer",
+        "--single-process",
+    ] if platform.system() == "Linux" else []
     browser = await pw.chromium.launch(
         headless=True,
-        args=[
-            "--disable-blink-features=AutomationControlled",
-            "--disable-dev-shm-usage",
-            "--no-sandbox",
-            "--disable-setuid-sandbox",
-            "--no-zygote",
-            "--disable-gpu",
-            "--disable-extensions",
-            "--disable-software-rasterizer",
-            "--single-process",
-        ],
+        args=["--disable-blink-features=AutomationControlled"] + linux_args,
     )
     _context = await browser.new_context(
         user_agent=_BROWSER_UA,
