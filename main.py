@@ -54,6 +54,8 @@ _CACHE_TTL = 1800  # 30 minutes
 # (store_name, normalized_query) -> (monotonic_timestamp, results)
 _cache: dict[tuple[str, str], tuple[float, list]] = {}
 
+_scrape_sem = asyncio.Semaphore(5)
+
 # Bottle names accumulated from all past searches for autocomplete
 _name_index: set[str] = set()
 
@@ -68,6 +70,8 @@ async def lifespan(app: FastAPI):
         args=[
             "--disable-blink-features=AutomationControlled",
             "--disable-dev-shm-usage",
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
         ],
     )
     _context = await browser.new_context(
@@ -142,6 +146,11 @@ async def _run_scraper(scraper, query: str) -> list[ResultItem]:
         if time.monotonic() - ts < _CACHE_TTL:
             return cached_items
 
+    async with _scrape_sem:
+        return await _run_scraper_inner(scraper, query, cache_key)
+
+
+async def _run_scraper_inner(scraper, query: str, cache_key: tuple) -> list[ResultItem]:
     assert _context is not None
     page = await _context.new_page()
     tokens = _query_tokens(query)
